@@ -35,7 +35,7 @@ func XGBLinearFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensemb
 	e.nRawOutputGroups = int(gbLinearModel.Param.NumOutputGroup)
 	e.NumFeature = int(gbLinearModel.Param.NumFeature)
 	e.Weights = gbLinearModel.Weights
-	return &Ensemble{e}, nil
+	return &Ensemble{e, &TransformRaw{e.nRawOutputGroups}}, nil
 }
 
 // XGBLinearFromFile reads XGBoost's 'gblinear' model from binary file

@@ -135,10 +135,6 @@ func xgTreeFromTreeModel(origTree *xgbin.TreeModel, numFeatures uint32) (lgTree,
 func XGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensemble, error) {
 	e := &xgEnsemble{}
 
-	if loadTransformation {
-		return nil, fmt.Errorf("transformation functions are not supported for XGBoost models")
-	}
-
 	// reading header info
 	header, err := xgbin.ReadModelHeader(reader)
 	if err != nil {
@@ -210,6 +206,16 @@ func XGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 		e.TreeInfo[i] = int(v)
 	}
 
+	var transform Transform
+	transform = &TransformRaw{e.nRawOutputGroups}
+	if loadTransformation {
+		if header.NameObj == "binary:logistic" {
+			transform = &TransformLogistic{}
+		} else {
+			return nil, fmt.Errorf("unknown transformation function '%s'", header.NameObj)
+		}
+	}
+
 	nTrees := origModel.Param.NumTrees
 	if nTrees == 0 {
 		return nil, fmt.Errorf("no trees in model")
@@ -224,7 +230,7 @@ func XGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 		}
 		e.Trees = append(e.Trees, tree)
 	}
-	return &Ensemble{e}, nil
+	return &Ensemble{e, transform}, nil
 }
 
 // XGEnsembleFromFile reads XGBoost model from binary file. Works with 'gbtree' and 'dart' models

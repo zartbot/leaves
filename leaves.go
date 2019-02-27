@@ -23,6 +23,18 @@ type ensembleBaseInterface interface {
 // Ensemble is a common wrapper for all models
 type Ensemble struct {
 	ensembleBaseInterface
+	transform Transform
+}
+
+func (e *Ensemble) predictInnerAndTransform(fvals []float64, nEstimators int, predictions []float64, startIndex int) {
+	if e.TransformType() == Raw {
+		e.predictInner(fvals, nEstimators, predictions, startIndex)
+	} else {
+		// TODO: avoid allocation here
+		rawPredictions := make([]float64, e.NRawOutputGroups())
+		e.predictInner(fvals, nEstimators, rawPredictions, 0)
+		e.transform.Transform(rawPredictions, predictions, startIndex)
+	}
 }
 
 // PredictSingle calculates prediction for single class model. If ensemble is
@@ -32,7 +44,7 @@ type Ensemble struct {
 // function transformation and etc)
 // NOTE: for multiclass prediction use Predict
 func (e *Ensemble) PredictSingle(fvals []float64, nEstimators int) float64 {
-	if e.NRawOutputGroups() != 1 {
+	if e.NOutputGroups() != 1 {
 		return 0.0
 	}
 	if e.NFeatures() > len(fvals) {
@@ -41,7 +53,7 @@ func (e *Ensemble) PredictSingle(fvals []float64, nEstimators int) float64 {
 	nEstimators = e.adjustNEstimators(nEstimators)
 	ret := [1]float64{0.0}
 
-	e.predictInner(fvals, nEstimators, ret[:], 0)
+	e.predictInnerAndTransform(fvals, nEstimators, ret[:], 0)
 	return ret[0]
 }
 
@@ -51,15 +63,15 @@ func (e *Ensemble) PredictSingle(fvals []float64, nEstimators int) float64 {
 // NOTE: for single class predictions one can use simplified function PredictSingle
 func (e *Ensemble) Predict(fvals []float64, nEstimators int, predictions []float64) error {
 	nRows := 1
-	if len(predictions) < e.NRawOutputGroups()*nRows {
-		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NRawOutputGroups()*nRows)
+	if len(predictions) < e.NOutputGroups()*nRows {
+		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups()*nRows)
 	}
 	if e.NFeatures() > len(fvals) {
 		return fmt.Errorf("incorrect number of features (%d)", len(fvals))
 	}
 	nEstimators = e.adjustNEstimators(nEstimators)
 
-	e.predictInner(fvals, nEstimators, predictions, 0)
+	e.predictInnerAndTransform(fvals, nEstimators, predictions, 0)
 	return nil
 }
 
@@ -72,8 +84,8 @@ func (e *Ensemble) Predict(fvals []float64, nEstimators int, predictions []float
 // Note, `predictions` slice should be properly allocated on call side
 func (e *Ensemble) PredictCSR(indptr []int, cols []int, vals []float64, predictions []float64, nEstimators int, nThreads int) error {
 	nRows := len(indptr) - 1
-	if len(predictions) < e.NRawOutputGroups()*nRows {
-		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NRawOutputGroups()*nRows)
+	if len(predictions) < e.NOutputGroups()*nRows {
+		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups()*nRows)
 	}
 	nEstimators = e.adjustNEstimators(nEstimators)
 	if nRows <= BatchSize || nThreads == 0 || nThreads == 1 {
@@ -136,7 +148,7 @@ func (e *Ensemble) predictCSRInner(
 				fvals[cols[j]] = vals[j]
 			}
 		}
-		e.predictInner(fvals, nEstimators, predictions, i*e.NRawOutputGroups())
+		e.predictInnerAndTransform(fvals, nEstimators, predictions, i*e.NOutputGroups())
 		e.resetFVals(fvals)
 	}
 }
@@ -156,8 +168,8 @@ func (e *Ensemble) PredictDense(
 	nThreads int,
 ) error {
 	nRows := nrows
-	if len(predictions) < e.NRawOutputGroups()*nRows {
-		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NRawOutputGroups()*nRows)
+	if len(predictions) < e.NOutputGroups()*nRows {
+		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups()*nRows)
 	}
 	if ncols == 0 || e.NFeatures() > ncols {
 		return fmt.Errorf("incorrect number of columns")
@@ -166,7 +178,7 @@ func (e *Ensemble) PredictDense(
 	if nRows <= BatchSize || nThreads == 0 || nThreads == 1 {
 		// single thread calculations
 		for i := 0; i < nRows; i++ {
-			e.predictInner(vals[i*ncols:(i+1)*ncols], nEstimators, predictions, i*e.NRawOutputGroups())
+			e.predictInnerAndTransform(vals[i*ncols:(i+1)*ncols], nEstimators, predictions, i*e.NOutputGroups())
 		}
 		return nil
 	}
@@ -190,7 +202,7 @@ func (e *Ensemble) PredictDense(
 					endIndex = nRows
 				}
 				for i := startIndex; i < endIndex; i++ {
-					e.predictInner(vals[i*int(ncols):(i+1)*int(ncols)], nEstimators, predictions, i*e.NRawOutputGroups())
+					e.predictInnerAndTransform(vals[i*int(ncols):(i+1)*int(ncols)], nEstimators, predictions, i*e.NOutputGroups())
 				}
 			}
 		}()
@@ -211,10 +223,18 @@ func (e *Ensemble) NEstimators() int {
 }
 
 // NRawOutputGroups returns number of groups (numbers) in every object
-// predictions. For example binary logistic model will give 1, but 4-class
-// prediction model will give 4 numbers per object
+// predictions before transformation function applied. This value is provided
+// mainly for information purpose
 func (e *Ensemble) NRawOutputGroups() int {
 	return e.ensembleBaseInterface.NRawOutputGroups()
+}
+
+// NOutputGroups returns number of groups (numbers) in every object predictions.
+// For example binary logistic model will give 1, but 4-class prediction model
+// will give 4 numbers per object. This value usually used to preallocate slice
+// with prediction values
+func (e *Ensemble) NOutputGroups() int {
+	return e.transform.NOutputGroups()
 }
 
 // NFeatures returns number of features in the model
@@ -225,4 +245,19 @@ func (e *Ensemble) NFeatures() int {
 // Name returns name of the estimator
 func (e *Ensemble) Name() string {
 	return e.ensembleBaseInterface.Name()
+}
+
+// TransformType returns enum value of used transformation function
+func (e *Ensemble) TransformType() TransformType {
+	return e.transform.Type()
+}
+
+// TransformName returns name of used transformation function
+func (e *Ensemble) TransformName() string {
+	return e.transform.Name()
+}
+
+// EnsembleWithRawPredictions returns ensemble instance with TransformRaw
+func (e *Ensemble) EnsembleWithRawPredictions() *Ensemble {
+	return &Ensemble{e, &TransformRaw{e.NRawOutputGroups()}}
 }

@@ -171,7 +171,7 @@ func SKEnsembleFromReader(reader *bufio.Reader) (*Ensemble, error) {
 			base[k] = 0.0
 		}
 	}
-	return &Ensemble{e}, nil
+	return &Ensemble{e, &TransformRaw{e.nRawOutputGroups}}, nil
 }
 
 // SKEnsembleFromFile reads sklearn tree ensemble model from pickle file
