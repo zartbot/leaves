@@ -274,42 +274,50 @@ func TestXGAgaricus(t *testing.T) {
 
 func InnerTestXGAgaricus(t *testing.T, nThreads int) {
 	// loading test data
-	path := filepath.Join("testdata", "agaricus_test.libsvm")
-	reader, err := os.Open(path)
-	if err != nil {
-		t.Skipf("Skipping due to absence of %s", path)
-	}
-	bufReader := bufio.NewReader(reader)
-	csr, err := mat.CSRMatFromLibsvm(bufReader, 0, true)
+	testPath := filepath.Join("testdata", "agaricus_test.libsvm")
+	modelPath := filepath.Join("testdata", "xgagaricus.model")
+	truePath := filepath.Join("testdata", "xgagaricus_true_predictions.txt")
+	skipTestIfFileNotExist(t, testPath, modelPath, truePath)
+	csr, err := mat.CSRMatFromLibsvmFile(testPath, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// loading model
-	path = filepath.Join("testdata", "xgagaricus.model")
-	model, err := XGEnsembleFromFile(path, false)
+	model, err := XGEnsembleFromFile(modelPath, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if model.NEstimators() != 3 {
 		t.Fatalf("expected 3 trees (got %d)", model.NEstimators())
 	}
+	if model.NOutputGroups() != 1 {
+		t.Fatalf("expected NOutputGroups = 1 (got %d)", model.NOutputGroups())
+	}
+	if model.NOutputGroups() != 1 {
+		t.Fatalf("expected NOutputGroups = 1 (got %d)", model.NOutputGroups())
+	}
+	if model.TransformType() != Logistic {
+		t.Fatalf("expected TransforType = Logistic (got %s)", model.TransformName())
+	}
 
 	// loading true predictions as DenseMat
-	path = filepath.Join("testdata", "xgagaricus_true_predictions.txt")
-	reader, err = os.Open(path)
-	if err != nil {
-		t.Skipf("Skipping due to absence of %s", path)
-	}
-	bufReader = bufio.NewReader(reader)
-	truePredictions, err := mat.DenseMatFromCsv(bufReader, 0, false, ",", 0.0)
+	truePredictions, err := mat.DenseMatFromCsvFile(truePath, 0, false, ",", 0.0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// do predictions
-	predictions := make([]float64, csr.Rows())
+	// do predictions with transformation inside
+	predictions := make([]float64, csr.Rows()*model.NOutputGroups())
 	model.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, nThreads)
+	// compare results
+	if err := util.AlmostEqualFloat64Slices(truePredictions.Values, predictions, 1e-7); err != nil {
+		t.Fatalf("different predictions: %s", err.Error())
+	}
+
+	// do raw predictions with transformation outside
+	rawModel := model.EnsembleWithRawPredictions()
+	rawModel.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, nThreads)
 	util.SigmoidFloat64SliceInplace(predictions)
 	// compare results
 	if err := util.AlmostEqualFloat64Slices(truePredictions.Values, predictions, 1e-7); err != nil {
@@ -459,8 +467,8 @@ func InnerTestLGMulticlass(t *testing.T, nThreads int) {
 	if model.NEstimators() != 10 {
 		t.Fatalf("expected 10 trees (got %d)", model.NEstimators())
 	}
-	if model.NRawOutputGroups() != 5 {
-		t.Fatalf("expected 5 classes (got %d)", model.NRawOutputGroups())
+	if model.NOutputGroups() != 5 {
+		t.Fatalf("expected 5 classes (got %d)", model.NOutputGroups())
 	}
 
 	// loading true predictions as DenseMat
@@ -470,7 +478,7 @@ func InnerTestLGMulticlass(t *testing.T, nThreads int) {
 	}
 
 	// do predictions
-	predictions := make([]float64, dense.Rows*model.NRawOutputGroups())
+	predictions := make([]float64, dense.Rows*model.NOutputGroups())
 	model.PredictDense(dense.Values, dense.Rows, dense.Cols, predictions, 0, nThreads)
 	// compare results
 	const tolerance = 1e-7
@@ -481,12 +489,12 @@ func InnerTestLGMulticlass(t *testing.T, nThreads int) {
 	// check Predict
 	singleIdx := 200
 	fvals := dense.Values[singleIdx*dense.Cols : (singleIdx+1)*dense.Cols]
-	predictions = make([]float64, model.NRawOutputGroups())
+	predictions = make([]float64, model.NOutputGroups())
 	err = model.Predict(fvals, 0, predictions)
 	if err != nil {
 		t.Errorf("error while call model.Predict: %s", err.Error())
 	}
-	if err := util.AlmostEqualFloat64Slices(truePredictions.Values[singleIdx*model.NRawOutputGroups():(singleIdx+1)*model.NRawOutputGroups()], predictions, tolerance); err != nil {
+	if err := util.AlmostEqualFloat64Slices(truePredictions.Values[singleIdx*model.NOutputGroups():(singleIdx+1)*model.NOutputGroups()], predictions, tolerance); err != nil {
 		t.Errorf("different Predict prediction: %s", err.Error())
 	}
 }
@@ -531,7 +539,7 @@ func InnerTestXGDermatology(t *testing.T, nThreads int) {
 	}
 
 	// do predictions
-	predictions := make([]float64, csr.Rows()*model.NRawOutputGroups())
+	predictions := make([]float64, csr.Rows()*model.NOutputGroups())
 	model.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, nThreads)
 	// compare results
 	const tolerance = 1e-6
@@ -563,7 +571,7 @@ func TestSKGradientBoostingClassifier(t *testing.T) {
 	}
 
 	// do predictions
-	predictions := make([]float64, csr.Rows()*model.NRawOutputGroups())
+	predictions := make([]float64, csr.Rows()*model.NOutputGroups())
 	model.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, 1)
 	// compare results
 	const tolerance = 1e-6
@@ -597,7 +605,7 @@ func TestSKIris(t *testing.T) {
 	}
 
 	// do predictions
-	predictions := make([]float64, csr.Rows()*model.NRawOutputGroups())
+	predictions := make([]float64, csr.Rows()*model.NOutputGroups())
 	model.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, 1)
 	// compare results
 	const tolerance = 1e-6
@@ -637,9 +645,8 @@ func TestLGRandomForestIris(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	// do predictions
-	predictions := make([]float64, csr.Rows()*model.NRawOutputGroups())
+	predictions := make([]float64, csr.Rows()*model.NOutputGroups())
 	model.PredictCSR(csr.RowHeaders, csr.ColIndexes, csr.Values, predictions, 0, 1)
 	// compare results
 	const tolerance = 1e-6
@@ -702,7 +709,7 @@ func TestLGDARTBreastCancer(t *testing.T) {
 	}
 
 	// loading model
-	model, err := LGEnsembleFromFile(modelPath, false)
+	model, err := LGEnsembleFromFile(modelPath, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +721,7 @@ func TestLGDARTBreastCancer(t *testing.T) {
 	}
 
 	// do predictions
-	predictions := make([]float64, test.Rows*model.NRawOutputGroups())
+	predictions := make([]float64, test.Rows*model.NOutputGroups())
 	err = model.PredictDense(test.Values, test.Rows, test.Cols, predictions, 0, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -753,7 +760,7 @@ func TestLGKDDCup99(t *testing.T) {
 	}
 
 	// do predictions
-	predictions := make([]float64, test.Rows*model.NRawOutputGroups())
+	predictions := make([]float64, test.Rows*model.NOutputGroups())
 	err = model.PredictDense(test.Values, test.Rows, test.Cols, predictions, 0, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -790,7 +797,7 @@ func InnerBenchmarkLGKDDCup99(b *testing.B, nThreads int) {
 
 	// do benchmark
 	b.ResetTimer()
-	predictions := make([]float64, test.Rows*model.NRawOutputGroups())
+	predictions := make([]float64, test.Rows*model.NOutputGroups())
 	for i := 0; i < b.N; i++ {
 		model.PredictDense(test.Values, test.Rows, test.Cols, predictions, 0, nThreads)
 	}
@@ -826,11 +833,12 @@ func TestLGJsonBreastCancer(t *testing.T) {
 	}
 
 	// do predictions
-	predictions := make([]float64, test.Rows*model.NRawOutputGroups())
+	predictions := make([]float64, test.Rows*model.NOutputGroups())
 	err = model.PredictDense(test.Values, test.Rows, test.Cols, predictions, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	util.SigmoidFloat64SliceInplace(predictions)
 
 	// compare results
 	const tolerance = 1e-6
