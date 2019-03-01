@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmitryikh/leaves/internal/xgbin"
+	"github.com/zartbot/leaves/internal/xgbin"
 )
 
 func xgSplitIndex(origNode *xgbin.Node) uint32 {

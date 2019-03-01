@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dmitryikh/leaves/mat"
-	"github.com/dmitryikh/leaves/util"
+	"github.com/zartbot/leaves/mat"
+	"github.com/zartbot/leaves/util"
 )
 
 func isFileExists(filename string) bool {
